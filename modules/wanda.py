@@ -56,7 +56,7 @@ def prune_wanda(config: PruningConfig, model_path: str):
 
     if config.sparsity_ratio != 0:
         print("Pruning starts")
-        dataloader, _ = get_loaders("c4", nsamples=config.nsamples, seed=config.seed, seqlen=model.seqlen, tokenizer=tokenizer)
+        dataloader, _ = get_loaders(config.dataset, nsamples=config.nsamples, seed=config.seed, seqlen=model.seqlen, tokenizer=tokenizer)
         print("Calibration data loaded")
 
         with torch.no_grad():
