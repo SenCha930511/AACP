@@ -1,5 +1,6 @@
 import modules
-from config import PruningConfig, LoRaConfig, EvaluateConfig, WandappConfig
+from config import PruningConfig, LoRaConfig, EvaluateConfig, WandappConfig, ActivationAnalysisConfig
+
 
 class ActivationAwarePruning():
     """
@@ -23,6 +24,9 @@ class ActivationAwarePruning():
 
     def evaluate_model_sparsity(self):
         return modules.evaluate_model_sparsity(self.model_path)
-    
-    def prune_wandapp(self, config: WandappConfig):   # <-- 新增方法
+
+    def prune_wandapp(self, config: WandappConfig):
         return modules.prune_wandapp(config, self.model_path)
+
+    def analyze_activation(self, config: ActivationAnalysisConfig):
+        return modules.compare_activation_coverage(config)
