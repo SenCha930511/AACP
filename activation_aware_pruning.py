@@ -1,5 +1,5 @@
 import modules
-from config import PruningConfig, LoRaConfig, EvaluateConfig, GradualConfig, WandappConfig
+from config import PruningConfig, LoRaConfig, EvaluateConfig, WandappConfig
 
 class ActivationAwarePruning():
     """
