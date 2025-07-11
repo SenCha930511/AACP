@@ -221,8 +221,46 @@ def get_dclm(nsamples, seed, seqlen, tokenizer):
     testenc = tokenizer(eval_text, return_tensors='pt')
     return trainloader, testenc
 
+@register_loader("json")
+def get_json(nsamples, seed, seqlen, tokenizer):
+    import json
+    import os
+
+    # 假設 dataset name 是一個檔案路徑（例如 "topk_c4_activation.jsonl"）
+    filepath = seed if isinstance(seed, str) and os.path.isfile(seed) else None
+    if filepath is None:
+        raise ValueError("請將 JSON 路徑作為 seed 傳入，或確認檔案存在")
+
+    with open(filepath, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    texts = [json.loads(line)["text"] for line in lines if "text" in json.loads(line)]
+    texts = texts[:nsamples]
+
+    trainloader = []
+    for text in texts:
+        enc = tokenizer(text, return_tensors='pt', truncation=True, max_length=seqlen)
+        input_ids = enc.input_ids
+        if input_ids.shape[1] < seqlen:
+            pad = torch.full((1, seqlen - input_ids.shape[1]), tokenizer.pad_token_id or 0)
+            input_ids = torch.cat([input_ids, pad], dim=1)
+        else:
+            input_ids = input_ids[:, :seqlen]
+        target = input_ids.clone()
+        target[:, :-1] = -100
+        trainloader.append((input_ids, target))
+
+    # 評估資料（拼接前幾段）
+    eval_text = " ".join(texts[:5]) if len(texts) >= 5 else texts[0]
+    eval_enc = tokenizer(eval_text, return_tensors='pt')
+    return trainloader, eval_enc
+
 # Unified loader entry point
 def get_loaders(name, nsamples=128, seed=0, seqlen=2048, tokenizer=None):
+    if name.endswith(".jsonl"):
+        # 以 "json" loader 並傳入檔案路徑當作 seed
+        return DATASET_LOADERS["json"](nsamples, name, seqlen, tokenizer)
+        
     for key in DATASET_LOADERS:
         if key in name:
             return DATASET_LOADERS[key](nsamples, seed, seqlen, tokenizer)

@@ -10,6 +10,6 @@ class PruningConfig:
     sparsity_type: str = "unstructured"
     model: str = "meta-llama/Llama-2-7b-hf"
     use_variant: bool = False
-    dataset: str = "c4"
+    dataset: str = "topk_c4_activation.jsonl"
     save: Optional[str] = None
     save_model: Optional[str] = "out"

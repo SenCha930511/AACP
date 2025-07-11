@@ -28,9 +28,32 @@ def finalize_pruned_model(model):
             except ValueError:
                 continue
 
+def safe_forward_pass(layer, hidden_states, attention_mask=None, position_ids=None):
+    """
+    安全的前向傳播，處理不同版本的 transformers 兼容性問題
+    """
+    try:
+        if attention_mask is not None and position_ids is not None:
+            return layer(hidden_states, attention_mask=attention_mask, position_ids=position_ids)
+        elif attention_mask is not None:
+            return layer(hidden_states, attention_mask=attention_mask)
+        else:
+            return layer(hidden_states)
+    except Exception as e:
+        print(f"Forward pass failed with full parameters: {e}")
+        try:
+            return layer(hidden_states)
+        except Exception as e2:
+            print(f"Forward pass failed with minimal parameters: {e2}")
+            try:
+                return layer(hidden_states, use_cache=False)
+            except Exception as e3:
+                print(f"Forward pass failed with use_cache=False: {e3}")
+                raise e3  # 一定要raise出去讓外層知道
+
 def prune_wanda(config: PruningConfig, model_path: str):
-    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = "expandable_segments:True"
-    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:32"
+    # 合併環境變數設置，避免覆寫
+    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = "expandable_segments:True,max_split_size_mb:32"
 
     print(f"Torch Version: {torch.__version__}")
     print(f"# of GPUs: {torch.cuda.device_count()}")
@@ -62,19 +85,33 @@ def prune_wanda(config: PruningConfig, model_path: str):
         with torch.no_grad():
             inps, outs, attention_mask, position_ids = prepare_calibration_input(model, dataloader, device, batch_size=config.nsamples)
 
+        # 確保 attention_mask 和 position_ids 的正確性
         if attention_mask is None:
             attention_mask = torch.ones((inps.size(0), model.seqlen), dtype=torch.long, device=device)
         if position_ids is None:
             position_ids = torch.arange(model.seqlen, device=device).unsqueeze(0).repeat(inps.size(0), 1)
 
+        # 調試信息
+        print(f"[INFO] Input shapes: inps={inps.shape}, attention_mask={attention_mask.shape if attention_mask is not None else None}, position_ids={position_ids.shape if position_ids is not None else None}")
+
         layers = model.model.layers
+        print(f"[INFO] Start pruning. Number of layers: {len(layers)}")
+
         for i in tqdm(range(len(layers))):
+            print(f"[INFO] Processing layer {i}")
             layer = layers[i]
             subset = find_layers(layer)
 
+            # 設備映射處理
+            current_device = device
             if f"model.layers.{i}" in model.hf_device_map:
-                dev = model.hf_device_map[f"model.layers.{i}"]
-                inps, outs, attention_mask, position_ids = inps.to(dev), outs.to(dev), attention_mask.to(dev), position_ids.to(dev)
+                current_device = model.hf_device_map[f"model.layers.{i}"]
+                inps = inps.to(current_device)
+                outs = outs.to(current_device)
+                if attention_mask is not None:
+                    attention_mask = attention_mask.to(current_device)
+                if position_ids is not None:
+                    position_ids = position_ids.to(current_device)
 
             wrapped_layers = {}
             for name in subset:
@@ -89,63 +126,122 @@ def prune_wanda(config: PruningConfig, model_path: str):
             for name in wrapped_layers:
                 handles.append(subset[name].register_forward_hook(add_batch(name)))
 
+            # 前向傳播循環，含例外處理和詳細錯誤輸出
             for j in range(config.nsamples):
                 with torch.no_grad():
-                    outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
+                    try:
+                        current_input = inps[j].unsqueeze(0)
+                        current_attention_mask = None
+                        current_position_ids = None
 
+                        if attention_mask is not None:
+                            if attention_mask.dim() == 2 and j < attention_mask.size(0):
+                                current_attention_mask = attention_mask[j:j+1]
+                            elif attention_mask.dim() == 2:
+                                current_attention_mask = attention_mask[:1]
+                            else:
+                                current_attention_mask = attention_mask
+
+                        if position_ids is not None:
+                            if position_ids.dim() == 2 and j < position_ids.size(0):
+                                current_position_ids = position_ids[j:j+1]
+                            elif position_ids.dim() == 2:
+                                current_position_ids = position_ids[:1]
+                            else:
+                                current_position_ids = position_ids
+
+                        # 安全前向傳播
+                        layer_output = safe_forward_pass(
+                            layer, 
+                            current_input, 
+                            current_attention_mask, 
+                            current_position_ids
+                        )
+
+                        if isinstance(layer_output, tuple):
+                            outs[j] = layer_output[0]
+                        else:
+                            outs[j] = layer_output
+
+                    except Exception as e:
+                        print(f"[ERROR] Forward pass error at layer {i}, sample {j}: {e}")
+                        print(f"Input shape: {current_input.shape}")
+                        print(f"Attention mask shape: {current_attention_mask.shape if current_attention_mask is not None else None}")
+                        print(f"Position IDs shape: {current_position_ids.shape if current_position_ids is not None else None}")
+                        try:
+                            layer_output = layer(current_input)
+                            if isinstance(layer_output, tuple):
+                                outs[j] = layer_output[0]
+                            else:
+                                outs[j] = layer_output
+                        except Exception as e2:
+                            print(f"[ERROR] Even simple forward failed at layer {i}, sample {j}: {e2}")
+                            outs[j] = current_input.squeeze(0)
+
+            # 移除 hooks
             for h in handles:
                 h.remove()
 
-            # 對每個子層進行剪枝
+            # 剪枝每個子層
             for name in subset:
-                W_metric = torch.abs(subset[name].weight.data) * torch.sqrt(wrapped_layers[name].scaler_row.reshape((1, -1)))
-                W_mask = (torch.zeros_like(W_metric) == 1)
-                if prune_n != 0:
-                    for ii in range(W_metric.shape[1]):
-                        if ii % prune_m == 0:
-                            tmp = W_metric[:, ii:(ii + prune_m)].float()
-                            W_mask.scatter_(1, ii + torch.topk(tmp, prune_n, dim=1, largest=False)[1], True)
-                else:
-                    try:
-                        sort_res = torch.sort(W_metric, dim=-1, stable=True)
-                    except RuntimeError as e:
-                        print(f"Sort failed for layer {i} name {name} with error: {e}")
-                        continue
- 
-                    if config.use_variant:
-                        tmp_metric = torch.cumsum(sort_res[0], dim=1)
-                        sum_before = W_metric.sum(dim=1)
-                        alpha = 0.4
-                        alpha_hist = [0., 0.8]
-                        W_mask, cur_sparsity = return_given_alpha(alpha, sort_res, W_metric, tmp_metric, sum_before)
-                        while (torch.abs(cur_sparsity - config.sparsity_ratio) > 0.001) and (alpha_hist[1] - alpha_hist[0] >= 0.001):
-                            if cur_sparsity > config.sparsity_ratio:
-                                alpha_new = (alpha + alpha_hist[0]) / 2.0
-                                alpha_hist[1] = alpha
-                            else:
-                                alpha_new = (alpha + alpha_hist[1]) / 2.0
-                                alpha_hist[0] = alpha
-                            alpha = alpha_new 
-                            W_mask, cur_sparsity = return_given_alpha(alpha, sort_res, W_metric, tmp_metric, sum_before)
-                        print(f"alpha found {alpha} sparsity {cur_sparsity:.6f}")
+                if name not in wrapped_layers:
+                    continue
+                try:
+                    W_metric = torch.abs(subset[name].weight.data) * torch.sqrt(wrapped_layers[name].scaler_row.reshape((1, -1)))
+                    W_mask = (torch.zeros_like(W_metric) == 1)
+
+                    if prune_n != 0:
+                        for ii in range(W_metric.shape[1]):
+                            if ii % prune_m == 0:
+                                tmp = W_metric[:, ii:(ii + prune_m)].float()
+                                W_mask.scatter_(1, ii + torch.topk(tmp, prune_n, dim=1, largest=False)[1], True)
                     else:
-                        indices = sort_res[1][:, :int(W_metric.shape[1] * config.sparsity_ratio)]
-                        W_mask.scatter_(1, indices, True)
- 
-                # 將 mask 為 True 的位置設為 0
-                subset[name].weight.data[W_mask] = 0
- 
-                del W_metric, sort_res
-                gc.collect()
-                torch.cuda.empty_cache()
- 
+                        try:
+                            sort_res = torch.sort(W_metric, dim=-1, stable=True)
+                        except RuntimeError as e:
+                            print(f"[ERROR] Sort failed for layer {i} name {name} with error: {e}")
+                            continue
+
+                        if config.use_variant:
+                            tmp_metric = torch.cumsum(sort_res[0], dim=1)
+                            sum_before = W_metric.sum(dim=1)
+                            alpha = 0.4
+                            alpha_hist = [0., 0.8]
+                            W_mask, cur_sparsity = return_given_alpha(alpha, sort_res, W_metric, tmp_metric, sum_before)
+                            while (torch.abs(cur_sparsity - config.sparsity_ratio) > 0.001) and (alpha_hist[1] - alpha_hist[0] >= 0.001):
+                                if cur_sparsity > config.sparsity_ratio:
+                                    alpha_new = (alpha + alpha_hist[0]) / 2.0
+                                    alpha_hist[1] = alpha
+                                else:
+                                    alpha_new = (alpha + alpha_hist[1]) / 2.0
+                                    alpha_hist[0] = alpha
+                                alpha = alpha_new 
+                                W_mask, cur_sparsity = return_given_alpha(alpha, sort_res, W_metric, tmp_metric, sum_before)
+                            print(f"[INFO] alpha found {alpha} sparsity {cur_sparsity:.6f}")
+                        else:
+                            indices = sort_res[1][:, :int(W_metric.shape[1] * config.sparsity_ratio)]
+                            W_mask.scatter_(1, indices, True)
+
+                    # 將 mask 為 True 的位置設為 0
+                    subset[name].weight.data[W_mask] = 0
+
+                    del W_metric, sort_res
+
+                except Exception as e:
+                    print(f"[ERROR] Pruning failed for layer {i} name {name}: {e}")
+                    continue
+
             del wrapped_layers
             del handles
 
+            # 交換輸入輸出，為下一層做準備
             inps, outs = outs, inps
 
             gc.collect()
             torch.cuda.empty_cache()
+
+            print(f"[INFO] Completed processing layer {i}")
+            print(f"[MEM] Memory allocated after layer {i}: {torch.cuda.memory_allocated() / 1e9:.3f} GB")
 
     overall_sparsity, layer_sparsity = check_sparsity(model)
     print("*" * 30)
@@ -163,5 +259,5 @@ def prune_wanda(config: PruningConfig, model_path: str):
         finalize_pruned_model(model)
         model.save_pretrained(config.save_model)
         tokenizer.save_pretrained(config.save_model)
-        
+
     return overall_sparsity

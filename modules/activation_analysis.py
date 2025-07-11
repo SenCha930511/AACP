@@ -28,7 +28,7 @@ def compare_activation_coverage(config: ActivationAnalysisConfig):
 
     def get_hook():
         def hook(module, input, output):
-            # 若 output 是 tuple，取第 0 項作為真正的 activation tensor
+            # 取第 0 項作為真正的 activation tensor
             if isinstance(output, tuple):
                 output = output[0]
             ratio = (output > 0).float().mean().item()
