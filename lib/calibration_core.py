@@ -36,17 +36,34 @@ def prepare_calibration_input(model, dataloader, device, batch_size=1):
             autocast_context = autocast(dtype=torch.float16) if dtype == torch.float16 else torch.no_grad()
             with autocast_context:
                 input_ids = batch[0].to(device)
-                attention_mask = batch[1].to(device) if len(batch) > 1 else (input_ids != model.config.pad_token_id).long()
-                position_ids = torch.arange(model.seqlen, device=device).unsqueeze(0).repeat(input_ids.size(0), 1)
-                model(input_ids, attention_mask=attention_mask, position_ids=position_ids)
+                attention_mask_batch = batch[1].to(device) if len(batch) > 1 else (input_ids != model.config.pad_token_id).long()
+                position_ids_batch = torch.arange(model.seqlen, device=device).unsqueeze(0).repeat(input_ids.size(0), 1)
+                model(input_ids, attention_mask=attention_mask_batch, position_ids=position_ids_batch)
     except ValueError:
         pass
 
     layers[0] = layers[0].module
     outs = torch.zeros_like(inps)
-    attention_mask = cache['attention_mask']
-    position_ids = cache['position_ids']
+    
+    # 以下是關鍵：強制讓 attention_mask 與 position_ids batch size 與 inps 一致
+    
+    # 注意：cache['attention_mask'] 可能是 2D 或 4D，要視具體維度決定怎麼 repeat / expand
+    # 這裡假設 attention_mask shape 是 (batch_size, seq_len) 或 (batch_size, 1, seq_len, seq_len) 等
+    
+    def expand_to_batch(tensor, target_batch_size):
+        if tensor is None:
+            return None
+        if tensor.size(0) == target_batch_size:
+            return tensor
+        else:
+            # 利用 repeat 擴展 batch 維度
+            repeat_times = [target_batch_size] + [1]*(tensor.dim()-1)
+            return tensor.repeat(*repeat_times)
+    
+    attention_mask = expand_to_batch(cache['attention_mask'], batch_size)
+    position_ids = expand_to_batch(cache['position_ids'], batch_size)
+    
     model.config.use_cache = use_cache
     torch.cuda.empty_cache()
-
+    print(f"inps shape: {inps.shape}, attention_mask shape: {attention_mask.shape}, position_ids shape: {position_ids.shape}")
     return inps, outs, attention_mask, position_ids
