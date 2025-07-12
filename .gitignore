@@ -2,6 +2,7 @@ test.py
 models/
 out/
 output/
+data/
 lora_finetuned_model/
 __pycache__/
 aacp_env/

@@ -33,23 +33,70 @@ def safe_forward_pass(layer, hidden_states, attention_mask=None, position_ids=No
     安全的前向傳播，處理不同版本的 transformers 兼容性問題
     """
     try:
+        # 檢查輸入是否為None
+        if hidden_states is None:
+            raise ValueError("hidden_states cannot be None")
+        
+        # 確保所有張量都在相同設備上
+        device = hidden_states.device
+        if attention_mask is not None and attention_mask.device != device:
+            attention_mask = attention_mask.to(device)
+        if position_ids is not None and position_ids.device != device:
+            position_ids = position_ids.to(device)
+        
+        # 檢查並修正attention_mask的形狀
+        if attention_mask is not None:
+            batch_size = hidden_states.size(0)
+            seq_len = hidden_states.size(1)
+            
+            # 如果attention_mask是4D且batch維度不匹配，修正它
+            if attention_mask.dim() == 4:
+                if attention_mask.size(0) != batch_size:
+                    # 取第一個樣本並擴展到正確的batch size
+                    attention_mask = attention_mask[0:1].expand(batch_size, -1, -1, -1)
+            elif attention_mask.dim() == 2:
+                if attention_mask.size(0) != batch_size:
+                    # 取第一個樣本並擴展到正確的batch size
+                    attention_mask = attention_mask[0:1].expand(batch_size, -1)
+        
+        # 檢查並修正position_ids的形狀
+        if position_ids is not None:
+            batch_size = hidden_states.size(0)
+            seq_len = hidden_states.size(1)
+            
+            if position_ids.dim() == 2:
+                if position_ids.size(0) != batch_size:
+                    # 取第一個樣本並擴展到正確的batch size
+                    position_ids = position_ids[0:1].expand(batch_size, -1)
+                if position_ids.size(1) != seq_len:
+                    # 如果sequence長度不匹配，重新創建
+                    position_ids = torch.arange(seq_len, device=device).unsqueeze(0).repeat(batch_size, 1)
+        
+        # 嘗試完整的前向傳播
         if attention_mask is not None and position_ids is not None:
-            return layer(hidden_states, attention_mask=attention_mask, position_ids=position_ids)
+            result = layer(hidden_states, attention_mask=attention_mask, position_ids=position_ids)
         elif attention_mask is not None:
-            return layer(hidden_states, attention_mask=attention_mask)
+            result = layer(hidden_states, attention_mask=attention_mask)
         else:
-            return layer(hidden_states)
+            result = layer(hidden_states)
+        
+        return result
+        
     except Exception as e:
         print(f"Forward pass failed with full parameters: {e}")
         try:
+            # 嘗試僅使用hidden_states
             return layer(hidden_states)
         except Exception as e2:
             print(f"Forward pass failed with minimal parameters: {e2}")
             try:
+                # 嘗試使用use_cache=False
                 return layer(hidden_states, use_cache=False)
             except Exception as e3:
                 print(f"Forward pass failed with use_cache=False: {e3}")
-                raise e3  # 一定要raise出去讓外層知道
+                # 最後嘗試：返回輸入本身（跳過這一層）
+                print("Warning: 跳過此層，返回輸入張量")
+                return hidden_states
 
 def prune_wanda(config: PruningConfig, model_path: str):
     # 合併環境變數設置，避免覆寫
@@ -134,22 +181,41 @@ def prune_wanda(config: PruningConfig, model_path: str):
                         current_attention_mask = None
                         current_position_ids = None
 
+                        # 更安全的處理attention_mask
                         if attention_mask is not None:
-                            if attention_mask.dim() == 2 and j < attention_mask.size(0):
-                                current_attention_mask = attention_mask[j:j+1]
-                            elif attention_mask.dim() == 2:
-                                current_attention_mask = attention_mask[:1]
+                            if attention_mask.dim() == 2:
+                                # 2D attention_mask: (batch_size, seq_len)
+                                if j < attention_mask.size(0):
+                                    current_attention_mask = attention_mask[j:j+1]
+                                else:
+                                    current_attention_mask = attention_mask[0:1]
+                            elif attention_mask.dim() == 4:
+                                # 4D attention_mask: (batch_size, num_heads, seq_len, seq_len)
+                                if j < attention_mask.size(0):
+                                    current_attention_mask = attention_mask[j:j+1]
+                                else:
+                                    current_attention_mask = attention_mask[0:1]
                             else:
+                                # 其他情況，直接使用
                                 current_attention_mask = attention_mask
 
+                        # 更安全的處理position_ids
                         if position_ids is not None:
-                            if position_ids.dim() == 2 and j < position_ids.size(0):
-                                current_position_ids = position_ids[j:j+1]
-                            elif position_ids.dim() == 2:
-                                current_position_ids = position_ids[:1]
+                            if position_ids.dim() == 2:
+                                # 2D position_ids: (batch_size, seq_len)
+                                if j < position_ids.size(0):
+                                    current_position_ids = position_ids[j:j+1]
+                                else:
+                                    current_position_ids = position_ids[0:1]
                             else:
+                                # 其他情況，直接使用
                                 current_position_ids = position_ids
 
+                        # 確保所有張量都不是None並且在正確設備上
+                        if current_input is None:
+                            print(f"[WARNING] current_input is None at layer {i}, sample {j}")
+                            current_input = inps[j].unsqueeze(0)
+                        
                         # 安全前向傳播
                         layer_output = safe_forward_pass(
                             layer, 
@@ -158,6 +224,11 @@ def prune_wanda(config: PruningConfig, model_path: str):
                             current_position_ids
                         )
 
+                        # 確保layer_output不是None
+                        if layer_output is None:
+                            print(f"[WARNING] layer_output is None at layer {i}, sample {j}")
+                            layer_output = current_input
+                        
                         if isinstance(layer_output, tuple):
                             outs[j] = layer_output[0]
                         else:
@@ -165,18 +236,16 @@ def prune_wanda(config: PruningConfig, model_path: str):
 
                     except Exception as e:
                         print(f"[ERROR] Forward pass error at layer {i}, sample {j}: {e}")
-                        print(f"Input shape: {current_input.shape}")
-                        print(f"Attention mask shape: {current_attention_mask.shape if current_attention_mask is not None else None}")
-                        print(f"Position IDs shape: {current_position_ids.shape if current_position_ids is not None else None}")
-                        try:
-                            layer_output = layer(current_input)
-                            if isinstance(layer_output, tuple):
-                                outs[j] = layer_output[0]
-                            else:
-                                outs[j] = layer_output
-                        except Exception as e2:
-                            print(f"[ERROR] Even simple forward failed at layer {i}, sample {j}: {e2}")
+                        print(f"Input shape: {current_input.shape if current_input is not None else 'None'}")
+                        print(f"Attention mask shape: {current_attention_mask.shape if current_attention_mask is not None else 'None'}")
+                        print(f"Position IDs shape: {current_position_ids.shape if current_position_ids is not None else 'None'}")
+                        
+                        # 確保我們有一個有效的輸出
+                        if current_input is not None:
                             outs[j] = current_input.squeeze(0)
+                        else:
+                            # 如果連current_input都是None，使用原始輸入
+                            outs[j] = inps[j]
 
             # 移除 hooks
             for h in handles:

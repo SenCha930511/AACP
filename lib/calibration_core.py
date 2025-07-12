@@ -45,25 +45,72 @@ def prepare_calibration_input(model, dataloader, device, batch_size=1):
     layers[0] = layers[0].module
     outs = torch.zeros_like(inps)
     
-    # 以下是關鍵：強制讓 attention_mask 與 position_ids batch size 與 inps 一致
-    
-    # 注意：cache['attention_mask'] 可能是 2D 或 4D，要視具體維度決定怎麼 repeat / expand
-    # 這裡假設 attention_mask shape 是 (batch_size, seq_len) 或 (batch_size, 1, seq_len, seq_len) 等
-    
-    def expand_to_batch(tensor, target_batch_size):
+    # 修正張量擴展邏輯
+    def safe_expand_to_batch(tensor, target_batch_size, seq_len):
         if tensor is None:
             return None
-        if tensor.size(0) == target_batch_size:
-            return tensor
+        
+        # 確保tensor在正確的設備上
+        if tensor.device != device:
+            tensor = tensor.to(device)
+        
+        # 處理不同維度的張量
+        if tensor.dim() == 2:  # (batch_size, seq_len)
+            if tensor.size(0) == target_batch_size:
+                return tensor
+            elif tensor.size(0) == 1:
+                # 擴展batch維度
+                return tensor.expand(target_batch_size, -1)
+            else:
+                # 取第一個樣本並重複
+                return tensor[0:1].expand(target_batch_size, -1)
+        
+        elif tensor.dim() == 4:  # (batch_size, num_heads, seq_len, seq_len)
+            if tensor.size(0) == target_batch_size:
+                return tensor
+            elif tensor.size(0) == 1:
+                # 擴展batch維度
+                return tensor.expand(target_batch_size, -1, -1, -1)
+            else:
+                # 取第一個樣本並重複
+                return tensor[0:1].expand(target_batch_size, -1, -1, -1)
+        
+        elif tensor.dim() == 3:  # (batch_size, seq_len, hidden_size) 或其他3D張量
+            if tensor.size(0) == target_batch_size:
+                return tensor
+            elif tensor.size(0) == 1:
+                return tensor.expand(target_batch_size, -1, -1)
+            else:
+                return tensor[0:1].expand(target_batch_size, -1, -1)
+        
         else:
-            # 利用 repeat 擴展 batch 維度
-            repeat_times = [target_batch_size] + [1]*(tensor.dim()-1)
-            return tensor.repeat(*repeat_times)
+            # 其他情況，嘗試簡單的擴展
+            if tensor.size(0) == target_batch_size:
+                return tensor
+            else:
+                # 創建正確形狀的張量
+                new_shape = [target_batch_size] + list(tensor.shape[1:])
+                return tensor[0:1].expand(new_shape)
     
-    attention_mask = expand_to_batch(cache['attention_mask'], batch_size)
-    position_ids = expand_to_batch(cache['position_ids'], batch_size)
+    # 創建正確形狀的attention_mask和position_ids
+    attention_mask = safe_expand_to_batch(cache['attention_mask'], batch_size, model.seqlen)
+    position_ids = safe_expand_to_batch(cache['position_ids'], batch_size, model.seqlen)
+    
+    # 如果attention_mask仍然是None，創建一個默認的
+    if attention_mask is None:
+        attention_mask = torch.ones((batch_size, model.seqlen), dtype=torch.long, device=device)
+    
+    # 如果position_ids仍然是None，創建一個默認的
+    if position_ids is None:
+        position_ids = torch.arange(model.seqlen, device=device).unsqueeze(0).repeat(batch_size, 1)
     
     model.config.use_cache = use_cache
     torch.cuda.empty_cache()
-    print(f"inps shape: {inps.shape}, attention_mask shape: {attention_mask.shape}, position_ids shape: {position_ids.shape}")
+    
+    print(f"[INFO] Calibration準備完成:")
+    print(f"  - inps shape: {inps.shape}")
+    print(f"  - attention_mask shape: {attention_mask.shape}")
+    print(f"  - position_ids shape: {position_ids.shape}")
+    print(f"  - device: {device}")
+    
     return inps, outs, attention_mask, position_ids
