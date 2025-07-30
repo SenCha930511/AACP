@@ -112,5 +112,5 @@ def prepare_calibration_input(model, dataloader, device, batch_size=1):
     print(f"  - attention_mask shape: {attention_mask.shape}")
     print(f"  - position_ids shape: {position_ids.shape}")
     print(f"  - device: {device}")
-    
+  
     return inps, outs, attention_mask, position_ids
