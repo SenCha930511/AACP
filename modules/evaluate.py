@@ -164,17 +164,17 @@ def load_llama_model(model_base, lora_path=None):
     tokenizer.padding_side = "left"
     
     # 設置量化配置
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.float16,
-        bnb_4bit_use_double_quant=True
-    )
+    #bnb_config = BitsAndBytesConfig(
+     #   load_in_4bit=True,
+     #   bnb_4bit_compute_dtype=torch.float16,
+      #  bnb_4bit_use_double_quant=True
+    #)
     
     # 載入基礎模型
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
         torch_dtype=torch.float16,
-        quantization_config=bnb_config,
+     #   quantization_config=bnb_config,
         device_map="auto"
     )
     

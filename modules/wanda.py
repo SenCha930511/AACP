@@ -328,5 +328,5 @@ def prune_wanda(config: PruningConfig, model_path: str):
         finalize_pruned_model(model)
         model.save_pretrained(config.save_model)
         tokenizer.save_pretrained(config.save_model)
-
+ 
     return overall_sparsity
