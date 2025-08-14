@@ -33,6 +33,3 @@ class ActivationAwarePruning():
 
     def compare_global_activation_coverage(self, config: ActivationAnalysisConfig):
         return modules.compare_global_activation_coverage(config)
-
-    def compare_activation_gradient(self, config: ActivationAnalysisConfig):
-        return modules.compare_activation_gradient(config)
