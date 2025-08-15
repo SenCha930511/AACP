@@ -1,5 +1,5 @@
 import modules
-from config import PruningConfig, LoRaConfig, EvaluateConfig, WandappConfig, ActivationAnalysisConfig
+from config import PruningConfig, LoRaConfig, EvaluateConfig, WandappConfig, ActivationAnalysisConfig, HybridDatasetConfig
 
 
 class ActivationAwarePruning():
@@ -33,3 +33,6 @@ class ActivationAwarePruning():
 
     def compare_global_activation_coverage(self, config: ActivationAnalysisConfig):
         return modules.compare_global_activation_coverage(config)
+    
+    def create_hybrid_dataset(self, config: HybridDatasetConfig, tokenizer=None):
+        return modules.create_hybrid_dataset(config, self.model_path, tokenizer)

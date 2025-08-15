@@ -54,7 +54,7 @@ def compare_activation_coverage(config: ActivationAnalysisConfig):
     topk_scores = activation_scores[topk_indices]
     randk_scores = activation_scores[randk_indices]
 
-    if config.save_path is not None:
+    if config.save_path:
         print(f"Saving top-{config.top_k} activation-rich samples to {config.save_path}")
         topk_texts = [dataset_texts[i] for i in topk_indices]
         with open(config.save_path, 'w', encoding='utf-8') as f:

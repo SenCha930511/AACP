@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Optional
+from .hybrid_dataset_config import HybridDatasetConfig
 
 # 建立參數物件
 @dataclass
