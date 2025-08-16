@@ -116,7 +116,14 @@ def prune_wanda(config: PruningConfig, model_path: str):
     print(f"Loading model {config.model}")
     model = get_llm(config.model, model_path)
     model.eval()
-    tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=False)
+    
+    # 使用本地路徑載入 tokenizer
+    try:
+        print(f"嘗試從本地路徑載入 tokenizer: {model_path}")
+        tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
+    except Exception as e:
+        print(f"本地載入失敗，嘗試從 Hub 載入: {e}")
+        tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=False)
 
     device = torch.device("cuda:0")
     if "30b" in config.model or "65b" in config.model:

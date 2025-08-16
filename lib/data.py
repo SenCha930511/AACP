@@ -226,38 +226,78 @@ def get_json(nsamples, seed, seqlen, tokenizer):
     import json
     import os
 
-    # 假設 dataset name 是一個檔案路徑（例如 "topk_c4_activation.jsonl"）
+    # 假設 dataset name 是一個檔案路徑（例如 "hybrid_dataset_wanda.json"）
     filepath = seed if isinstance(seed, str) and os.path.isfile(seed) else None
     if filepath is None:
         raise ValueError("請將 JSON 路徑作為 seed 傳入，或確認檔案存在")
 
     with open(filepath, "r", encoding="utf-8") as f:
-        lines = f.readlines()
+        data = json.load(f)
 
-    texts = [json.loads(line)["text"] for line in lines if "text" in json.loads(line)]
-    texts = texts[:nsamples]
-
-    trainloader = []
-    for text in texts:
-        enc = tokenizer(text, return_tensors='pt', truncation=True, max_length=seqlen)
-        input_ids = enc.input_ids
-        if input_ids.shape[1] < seqlen:
-            pad = torch.full((1, seqlen - input_ids.shape[1]), tokenizer.pad_token_id or 0)
-            input_ids = torch.cat([input_ids, pad], dim=1)
+    # 檢查是否是新的格式（包含 samples 和 input_ids）
+    if "samples" in data and isinstance(data["samples"], list):
+        print(f"使用新的資料集格式，找到 {len(data['samples'])} 個樣本")
+        samples = data["samples"][:nsamples]
+        
+        trainloader = []
+        for sample in samples:
+            if "input_ids" in sample and isinstance(sample["input_ids"], list):
+                # 直接使用預處理的 input_ids
+                input_ids = torch.tensor(sample["input_ids"], dtype=torch.long)
+                if input_ids.dim() == 1:
+                    input_ids = input_ids.unsqueeze(0)
+                
+                # 確保長度正確
+                if input_ids.shape[1] < seqlen:
+                    pad = torch.full((1, seqlen - input_ids.shape[1]), tokenizer.pad_token_id or 0)
+                    input_ids = torch.cat([input_ids, pad], dim=1)
+                else:
+                    input_ids = input_ids[:, :seqlen]
+                
+                target = input_ids.clone()
+                target[:, :-1] = -100
+                trainloader.append((input_ids, target))
+            else:
+                print(f"警告：樣本缺少 input_ids: {sample.keys()}")
+        
+        # 評估資料（使用第一個樣本）
+        if trainloader:
+            eval_input_ids = trainloader[0][0]
+            eval_enc = {"input_ids": eval_input_ids}
         else:
-            input_ids = input_ids[:, :seqlen]
-        target = input_ids.clone()
-        target[:, :-1] = -100
-        trainloader.append((input_ids, target))
+            # 如果沒有有效樣本，創建一個空的
+            eval_enc = {"input_ids": torch.zeros((1, seqlen), dtype=torch.long)}
+            
+    else:
+        # 舊格式：每行一個 JSON 物件
+        with open(filepath, "r", encoding="utf-8") as f:
+            lines = f.readlines()
 
-    # 評估資料（拼接前幾段）
-    eval_text = " ".join(texts[:5]) if len(texts) >= 5 else texts[0]
-    eval_enc = tokenizer(eval_text, return_tensors='pt')
+        texts = [json.loads(line)["text"] for line in lines if "text" in json.loads(line)]
+        texts = texts[:nsamples]
+
+        trainloader = []
+        for text in texts:
+            enc = tokenizer(text, return_tensors='pt', truncation=True, max_length=seqlen)
+            input_ids = enc.input_ids
+            if input_ids.shape[1] < seqlen:
+                pad = torch.full((1, seqlen - input_ids.shape[1]), tokenizer.pad_token_id or 0)
+                input_ids = torch.cat([input_ids, pad], dim=1)
+            else:
+                input_ids = input_ids[:, :seqlen]
+            target = input_ids.clone()
+            target[:, :-1] = -100
+            trainloader.append((input_ids, target))
+
+        # 評估資料（拼接前幾段）
+        eval_text = " ".join(texts[:5]) if len(texts) >= 5 else texts[0]
+        eval_enc = tokenizer(eval_text, return_tensors='pt')
+
     return trainloader, eval_enc
 
 # Unified loader entry point
 def get_loaders(name, nsamples=128, seed=0, seqlen=2048, tokenizer=None):
-    if name.endswith(".jsonl"):
+    if name.endswith(".json") or name.endswith(".jsonl"):
         # 以 "json" loader 並傳入檔案路徑當作 seed
         return DATASET_LOADERS["json"](nsamples, name, seqlen, tokenizer)
         
