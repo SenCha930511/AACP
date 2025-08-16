@@ -1,8 +1,7 @@
 test.py
-models/
+model/
 out/
 output/
-data/
 llm_weights/
 lora_finetuned_model/
 __pycache__/

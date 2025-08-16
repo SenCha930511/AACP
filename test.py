@@ -78,7 +78,7 @@
 # print("剪枝後進行評估中...")
 # pruner.evaluate(eval_config)
 
-
+'''
 from activation_aware_pruning import ActivationAwarePruning
 from config import PruningConfig, EvaluateConfig, HybridDatasetConfig, DatasetConfig
 
@@ -97,3 +97,24 @@ hybrid_config = HybridDatasetConfig(
 
 aacp = ActivationAwarePruning("/Users/timmy/Code/AACP/llm_weights/models--meta-llama--Llama-2-7b-hf/snapshots/01c7f73d771dfac7d292323805ebc428287df4f9")
 aacp.create_hybrid_dataset(hybrid_config)
+'''
+
+from activation_aware_pruning import ActivationAwarePruning as aacp
+from config import PruningConfig, EvaluateConfig
+
+model_path = "/Users/timmy/Code/AACP/model/models--meta-llama--Llama-2-7b-hf"
+
+aacp = aacp(model_path)
+
+pruning_config = PruningConfig(
+    model="meta-llama/Llama-2-7b-hf",
+    dataset="/home/timmy930511/AACP/dataset/hybrid_dataset_wanda.json",
+    save_model = "out/wanda_c4_wikitext2"
+)
+
+evaluate_config = EvaluateConfig(
+    engine=["wanda_c4_wikitext2"]
+)
+
+aacp.prune_wanda(pruning_config)
+aacp.evaluate(evaluate_config)
