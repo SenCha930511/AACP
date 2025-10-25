@@ -8,7 +8,7 @@
 #SBATCH --time=02:00:00
 #SBATCH --output=aacp-%j.out
 #SBATCH --error=aacp-%j.err
-#SBATCH --account=ent114103
+#SBATCH --account=
 #SBATCH --mail-type=END,FAIL          
 #SBATCH --mail-user=acs111132@gm.ntcu.edu.tw
 
