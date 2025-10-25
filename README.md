@@ -15,21 +15,21 @@ AACP 是一個專注於大型語言模型（LLM）剪枝的研究專案，實現
 ## 系統需求  
   
 ### 硬體需求  
-- GPU：建議使用 2 張以上 GPU  
+- GPU：建議使用 1 張以上 GPU  
 - 記憶體：建議 32GB 以上  
   
 ### 軟體需求  
-詳見 `requirements.txt`： [0-cite-0](#0-cite-0)   
+詳見 `requirements.txt`
   
 ## 安裝步驟  
   
-1. 克隆此專案：  
+1. 使用此專案：  
 ```bash  
-git clone https://github.com/jimmy92919/AACP.git  
+git clone https://github.com/SenCha930511/AACP.git  
 cd AACP
 ```
 
-2. 安裝相依套件：
+2. 安裝依賴套件：
 ```bash
 pip install -r requirements.txt
 ```
@@ -41,11 +41,11 @@ AACP/
 ├── job.sh                       # SLURM 作業腳本  
 ├── requirements.txt             # 相依套件清單  
 ├── config/                      # 配置檔案目錄  
-│   ├── pruning_config.py       # 剪枝配置  
-│   ├── lora_config.py          # LoRA 配置  
-│   ├── wandapp_config.py       # WANDAPP 配置  
-│   ├── evaluate_config.py      # 評估配置  
-│   └── activation_analysis_config.py  # 啟動分析配置  
+│   ├── pruning_config.py       # 剪枝設定  
+│   ├── lora_config.py          # LoRA 設定   
+│   ├── wandapp_config.py       # WANDAPP 設定   
+│   ├── evaluate_config.py      # 評估設定  
+│   └── activation_analysis_config.py  # 啟動分析設定  
 ├── modules/                     # 功能模組  
 │   ├── wanda.py                # WANDA 剪枝實現  
 │   ├── wandapp.py              # WANDAPP 剪枝實現  
